@@ -235,6 +235,207 @@ class TestNestedBlocks:
         assert ws["A3"].value == "B"
 
 
+class TestColForLoops:
+    def test_simple_col_loop(self, env):
+        ws = make_ws({
+            "A1": "{%col for item in items %}",
+            "B1": "{{ item }}",
+            "C1": "{%col endfor %}",
+        })
+        SheetRenderer(ws, env).render({"items": ["a", "b", "c"]})
+
+        # Directive columns removed, 3 body columns remain
+        assert ws.cell(row=1, column=1).value == "a"
+        assert ws.cell(row=1, column=2).value == "b"
+        assert ws.cell(row=1, column=3).value == "c"
+
+    def test_col_loop_multi_column_body(self, env):
+        ws = make_ws({
+            "A1": "{%col for item in items %}",
+            "B1": "{{ item.name }}",
+            "C1": "{{ item.value }}",
+            "D1": "{%col endfor %}",
+        })
+        items = [{"name": "X", "value": 10}, {"name": "Y", "value": 20}]
+        SheetRenderer(ws, env).render({"items": items})
+
+        # 2 body cols * 2 items = 4 columns
+        assert ws.cell(row=1, column=1).value == "X"
+        assert ws.cell(row=1, column=2).value == 10
+        assert ws.cell(row=1, column=3).value == "Y"
+        assert ws.cell(row=1, column=4).value == 20
+
+    def test_col_loop_multi_row(self, env):
+        """Column loop with body spanning multiple rows."""
+        ws = make_ws({
+            "A1": "{%col for q in quarters %}",
+            "B1": "{{ q.name }}",
+            "B2": "{{ q.revenue }}",
+            "C1": "{%col endfor %}",
+        })
+        quarters = [
+            {"name": "Q1", "revenue": 100},
+            {"name": "Q2", "revenue": 200},
+            {"name": "Q3", "revenue": 300},
+        ]
+        SheetRenderer(ws, env).render({"quarters": quarters})
+
+        # 3 iterations * 1 body col = 3 columns
+        assert ws.cell(row=1, column=1).value == "Q1"
+        assert ws.cell(row=2, column=1).value == 100
+        assert ws.cell(row=1, column=2).value == "Q2"
+        assert ws.cell(row=2, column=2).value == 200
+        assert ws.cell(row=1, column=3).value == "Q3"
+        assert ws.cell(row=2, column=3).value == 300
+
+    def test_col_loop_empty_list(self, env):
+        ws = make_ws({
+            "A1": "Before",
+            "B1": "{%col for item in items %}",
+            "C1": "{{ item }}",
+            "D1": "{%col endfor %}",
+            "E1": "After",
+        })
+        SheetRenderer(ws, env).render({"items": []})
+
+        assert ws.cell(row=1, column=1).value == "Before"
+        assert ws.cell(row=1, column=2).value == "After"
+
+    def test_col_loop_single_item(self, env):
+        ws = make_ws({
+            "A1": "{%col for x in items %}",
+            "B1": "{{ x }}",
+            "C1": "{%col endfor %}",
+        })
+        SheetRenderer(ws, env).render({"items": ["only"]})
+        assert ws.cell(row=1, column=1).value == "only"
+
+    def test_col_loop_index(self, env):
+        ws = make_ws({
+            "A1": "{%col for x in items %}",
+            "B1": "{{ loop.index }}",
+            "B2": "{{ x }}",
+            "C1": "{%col endfor %}",
+        })
+        SheetRenderer(ws, env).render({"items": ["a", "b"]})
+        assert ws.cell(row=1, column=1).value == 1
+        assert ws.cell(row=2, column=1).value == "a"
+        assert ws.cell(row=1, column=2).value == 2
+        assert ws.cell(row=2, column=2).value == "b"
+
+    def test_col_loop_first_last(self, env):
+        ws = make_ws({
+            "A1": "{%col for x in items %}",
+            "B1": "{{ loop.first }}",
+            "B2": "{{ loop.last }}",
+            "C1": "{%col endfor %}",
+        })
+        SheetRenderer(ws, env).render({"items": ["a", "b", "c"]})
+        assert ws.cell(row=1, column=1).value is True
+        assert ws.cell(row=2, column=1).value is False
+        assert ws.cell(row=1, column=2).value is False
+        assert ws.cell(row=2, column=2).value is False
+        assert ws.cell(row=1, column=3).value is False
+        assert ws.cell(row=2, column=3).value is True
+
+    def test_col_loop_preserves_surrounding(self, env):
+        """Columns before and after the loop are preserved."""
+        ws = make_ws({
+            "A1": "Label",
+            "B1": "{%col for x in items %}",
+            "C1": "{{ x }}",
+            "D1": "{%col endfor %}",
+            "E1": "Total",
+        })
+        SheetRenderer(ws, env).render({"items": [1, 2, 3]})
+
+        assert ws.cell(row=1, column=1).value == "Label"
+        assert ws.cell(row=1, column=2).value == 1
+        assert ws.cell(row=1, column=3).value == 2
+        assert ws.cell(row=1, column=4).value == 3
+        assert ws.cell(row=1, column=5).value == "Total"
+
+
+class TestColIfBlocks:
+    def test_col_if_true(self, env):
+        ws = make_ws({
+            "A1": "Before",
+            "B1": "{%col if show %}",
+            "C1": "Visible",
+            "D1": "{%col endif %}",
+            "E1": "After",
+        })
+        SheetRenderer(ws, env).render({"show": True})
+
+        assert ws.cell(row=1, column=1).value == "Before"
+        assert ws.cell(row=1, column=2).value == "Visible"
+        assert ws.cell(row=1, column=3).value == "After"
+
+    def test_col_if_false(self, env):
+        ws = make_ws({
+            "A1": "Before",
+            "B1": "{%col if show %}",
+            "C1": "Hidden",
+            "D1": "{%col endif %}",
+            "E1": "After",
+        })
+        SheetRenderer(ws, env).render({"show": False})
+
+        assert ws.cell(row=1, column=1).value == "Before"
+        assert ws.cell(row=1, column=2).value == "After"
+
+    def test_col_if_with_expression(self, env):
+        ws = make_ws({
+            "A1": "{%col if total > 100 %}",
+            "B1": "Big!",
+            "C1": "{%col endif %}",
+        })
+        SheetRenderer(ws, env).render({"total": 150})
+        assert ws.cell(row=1, column=1).value == "Big!"
+
+    def test_col_if_false_multi_col_body(self, env):
+        ws = make_ws({
+            "A1": "Keep",
+            "B1": "{%col if show %}",
+            "C1": "Hide1",
+            "D1": "Hide2",
+            "E1": "{%col endif %}",
+            "F1": "Also keep",
+        })
+        SheetRenderer(ws, env).render({"show": False})
+
+        assert ws.cell(row=1, column=1).value == "Keep"
+        assert ws.cell(row=1, column=2).value == "Also keep"
+
+
+class TestColSyntaxErrors:
+    def test_mismatched_col_tags(self, env):
+        ws = make_ws({
+            "A1": "{%col for x in items %}",
+            "B1": "{{ x }}",
+            "C1": "{%col endif %}",
+        })
+        with pytest.raises(TemplateSyntaxError, match="Mismatched column"):
+            SheetRenderer(ws, env).render({"items": []})
+
+    def test_unclosed_col_block(self, env):
+        ws = make_ws({
+            "A1": "{%col for x in items %}",
+            "B1": "{{ x }}",
+        })
+        with pytest.raises(TemplateSyntaxError, match="Unclosed"):
+            SheetRenderer(ws, env).render({"items": []})
+
+    def test_bad_col_iterable(self, env):
+        ws = make_ws({
+            "A1": "{%col for x in nonexistent %}",
+            "B1": "{{ x }}",
+            "C1": "{%col endfor %}",
+        })
+        with pytest.raises(TemplateRenderError, match="Failed to evaluate"):
+            SheetRenderer(ws, env).render({})
+
+
 class TestSyntaxErrors:
     def test_mismatched_tags(self, env):
         ws = make_ws({

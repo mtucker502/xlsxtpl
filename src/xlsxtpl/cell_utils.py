@@ -17,6 +17,9 @@ _HAS_TAG_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
 # Matches a cell whose entire value is a single {% block directive %}
 _BLOCK_TAG_RE = re.compile(r"^\s*\{%[-\s]*(.*?)[-\s]*%\}\s*$", re.DOTALL)
 
+# Matches a cell whose entire value is a single {%col block directive %}
+_COL_BLOCK_TAG_RE = re.compile(r"^\s*\{%col[-\s]+(.*?)[-\s]*%\}\s*$", re.DOTALL)
+
 # Parses block directives: for, endfor, if, endif
 _FOR_RE = re.compile(r"^for\s+(\w+)\s+in\s+(.+)$")
 _ENDFOR_RE = re.compile(r"^endfor$")
@@ -89,6 +92,56 @@ def extract_block_directive(value: str) -> dict[str, Any] | None:
         return {"type": "endif"}
 
     return None
+
+
+def is_col_block_tag(value: Any) -> bool:
+    """Return True if the cell value is a column block directive ({%col ... %})."""
+    if not isinstance(value, str):
+        return False
+    return bool(_COL_BLOCK_TAG_RE.match(value))
+
+
+def extract_col_block_directive(value: str) -> dict[str, Any] | None:
+    """Parse a column block directive and return its components.
+
+    Returns a dict with 'type' key ('for', 'endfor', 'if', 'endif') and
+    additional keys depending on type, or None if not a column block directive.
+    """
+    m = _COL_BLOCK_TAG_RE.match(value)
+    if not m:
+        return None
+    inner = m.group(1).strip()
+
+    fm = _FOR_RE.match(inner)
+    if fm:
+        return {"type": "for", "var": fm.group(1), "iterable": fm.group(2).strip()}
+
+    if _ENDFOR_RE.match(inner):
+        return {"type": "endfor"}
+
+    im = _IF_RE.match(inner)
+    if im:
+        return {"type": "if", "condition": im.group(1).strip()}
+
+    if _ENDIF_RE.match(inner):
+        return {"type": "endif"}
+
+    return None
+
+
+def copy_column_dimensions(ws: Worksheet, src_col: int, tgt_col: int) -> None:
+    """Copy column width, hidden, and outline level from one column to another."""
+    from openpyxl.utils import get_column_letter
+
+    src_letter = get_column_letter(src_col)
+    src_dim = ws.column_dimensions.get(src_letter)
+    if src_dim is None:
+        return
+    tgt_letter = get_column_letter(tgt_col)
+    tgt_dim = ws.column_dimensions[tgt_letter]
+    tgt_dim.width = src_dim.width
+    tgt_dim.hidden = src_dim.hidden
+    tgt_dim.outlineLevel = src_dim.outlineLevel
 
 
 def coerce_type(rendered: str, original_value: Any) -> Any:

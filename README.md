@@ -7,6 +7,8 @@ Jinja2 templating for Excel `.xlsx` files. Like [docxtpl](https://github.com/ela
 - [Template syntax](#template-syntax)
 - [Row loops](#row-loops)
 - [Conditional rows](#conditional-rows)
+- [Column loops](#column-loops)
+- [Conditional columns](#conditional-columns)
 - [Custom filters](#custom-filters)
 
 ## Install
@@ -131,6 +133,58 @@ tpl = XlsxTemplate("template.xlsx")
 tpl.render({"show_detail": True, "detail": "important"})
 
 # Rows removed — show_detail is falsy
+tpl.render({"show_detail": False})
+```
+
+## Column loops
+
+Use `{%col for %}` to duplicate columns for each item in a list. Place the opening tag in its own column, the body columns to the right, and `{%col endfor %}` in a closing column. The directive columns are removed after processing.
+
+**In the template:**
+
+| | A | B | C | D |
+|---|---|---|---|---|
+| 1 | `{%col for q in quarters %}` | `{{ q.name }}` | `{{ q.revenue }}` | `{%col endfor %}` |
+| 2 | | `{{ q.profit }}` | `{{ q.margin }}` | |
+
+**Render:**
+
+```python
+tpl = XlsxTemplate("template.xlsx")
+tpl.render({
+    "quarters": [
+        {"name": "Q1", "revenue": "$1.2M", "profit": "$400K", "margin": "33%"},
+        {"name": "Q2", "revenue": "$1.5M", "profit": "$500K", "margin": "33%"},
+        {"name": "Q3", "revenue": "$1.8M", "profit": "$700K", "margin": "39%"},
+    ],
+})
+tpl.save("output.xlsx")
+# → 6 body columns (2 per quarter). Directive columns are removed.
+```
+
+Column widths and styles are preserved on duplicated columns. Standard `loop` variables (`loop.index`, `loop.first`, etc.) are available.
+
+> **Processing order:** Column blocks (`{%col %}`) are expanded before row blocks (`{% %}`). This means column loops and conditionals cannot be nested inside row loops, and column loop body expressions cannot reference row loop variables. However, row loops *can* appear inside column-expanded regions — the row phase runs after all column expansion is complete.
+
+## Conditional columns
+
+Use `{%col if %}` to conditionally include or exclude columns.
+
+**In the template:**
+
+| | A | B | C |
+|---|---|---|---|
+| 1 | `{%col if show_detail %}` | Detail | `{%col endif %}` |
+
+**Render:**
+
+```python
+tpl = XlsxTemplate("template.xlsx")
+
+# Column included — show_detail is truthy
+tpl.render({"show_detail": True})
+
+# Column removed — show_detail is falsy
 tpl.render({"show_detail": False})
 ```
 

@@ -14,5 +14,8 @@ build/
 .vscode/
 *.swp
 
+# Examples output
+examples/*_output.xlsx
+
 # OS
 .DS_Store
