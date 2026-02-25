@@ -190,15 +190,15 @@ class TestNestedBlocks:
         ws = make_ws({
             "A1": "{% for group in groups %}",
             "A2": "{{ group.name }}",
-            "A3": "{% for item in group.items %}",
+            "A3": "{% for item in group.entries %}",
             "A4": "{{ item }}",
             "A5": "{% endfor %}",
             "A6": "{% endfor %}",
         })
         context = {
             "groups": [
-                {"name": "G1", "items": ["a", "b"]},
-                {"name": "G2", "items": ["c"]},
+                {"name": "G1", "entries": ["a", "b"]},
+                {"name": "G2", "entries": ["c"]},
             ]
         }
         SheetRenderer(ws, env).render(context)

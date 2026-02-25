@@ -577,11 +577,14 @@ class SheetRenderer:
         if m:
             expr_str = m.group(1)
             try:
-                expr = self.env.compile_expression(expr_str)
+                expr = self.env.compile_expression(
+                    expr_str, undefined_to_none=False
+                )
                 result = expr(**context)
                 # Force undefined errors for strict mode
                 if isinstance(result, Undefined):
                     str(result)
+                    result = None
                 cell.value = result
             except Exception as e:
                 raise TemplateRenderError(
