@@ -74,6 +74,7 @@ class SheetRenderer:
         self.env = env
         self.expander = RowExpander(ws)
         self.col_expander = ColExpander(ws)
+        self._col_context: dict[int, dict[str, Any]] = {}
 
     def render(self, context: dict[str, Any]) -> None:
         """Full rendering pipeline for the worksheet."""
@@ -85,6 +86,63 @@ class SheetRenderer:
         blocks = self._scan_blocks_in_range(1, self.ws.max_row or 0)
         self._process_blocks(blocks, context)
         self._render_remaining_cells(context)
+
+    # --- Column context helpers ---
+
+    def _merge_col_context(self, col: int, context: dict[str, Any]) -> dict[str, Any]:
+        """Merge stored column context for a column into the given context.
+
+        Caller's context wins on conflict, so row-loop variables take
+        precedence over column-loop variables.
+        """
+        col_ctx = self._col_context.get(col)
+        if col_ctx is None:
+            return context
+        return {**col_ctx, **context}
+
+    def _shift_col_context(self, at_col: int, delta: int) -> None:
+        """Shift column context entries after a structural column change.
+
+        Positive delta: entries >= at_col shift right.
+        Negative delta: entries in the removed range are dropped,
+        entries above shift down.
+        """
+        if delta == 0:
+            return
+        old = self._col_context
+        new: dict[int, dict[str, Any]] = {}
+        if delta > 0:
+            for col, ctx in old.items():
+                if col >= at_col:
+                    new[col + delta] = ctx
+                else:
+                    new[col] = ctx
+        else:
+            # delta < 0 — columns [at_col, at_col - delta) were removed
+            removed_end = at_col - delta  # exclusive
+            for col, ctx in old.items():
+                if at_col <= col < removed_end:
+                    continue  # dropped
+                elif col >= removed_end:
+                    new[col + delta] = ctx
+                else:
+                    new[col] = ctx
+        self._col_context = new
+
+    def _store_col_context(
+        self, start_col: int, end_col: int, context: dict[str, Any]
+    ) -> None:
+        """Store per-column context for deferred rendering.
+
+        If a column already has context (from an inner loop), the existing
+        context takes precedence (inner loop wins).
+        """
+        for col in range(start_col, end_col + 1):
+            existing = self._col_context.get(col)
+            if existing is not None:
+                self._col_context[col] = {**context, **existing}
+            else:
+                self._col_context[col] = context
 
     # --- Phase A+B: Scan and match blocks ---
 
@@ -385,16 +443,19 @@ class SheetRenderer:
 
         if body_col_count <= 0:
             delta = self.col_expander.remove_cols(block.open_col, block.close_col)
+            self._shift_col_context(block.open_col, delta)
             return delta
 
         if iteration_count == 0:
             delta = self.col_expander.remove_cols(block.open_col, block.close_col)
+            self._shift_col_context(block.open_col, delta)
             return delta
 
         # Expand body columns for all iterations
         cols_added = self.col_expander.expand_for_loop(
             block.body_start, block.body_end, iteration_count
         )
+        self._shift_col_context(block.body_end + 1, cols_added)
 
         # Process each iteration
         cumulative_child_delta = 0
@@ -402,18 +463,20 @@ class SheetRenderer:
             iter_start = block.body_start + i * body_col_count + cumulative_child_delta
             iter_end = iter_start + body_col_count - 1
 
+            loop_info = {
+                "index": i + 1,
+                "index0": i,
+                "first": i == 0,
+                "last": i == iteration_count - 1,
+                "length": iteration_count,
+                "revindex": iteration_count - i,
+                "revindex0": iteration_count - i - 1,
+            }
             loop_context = {
                 **context,
                 var_name: item,
-                "loop": {
-                    "index": i + 1,
-                    "index0": i,
-                    "first": i == 0,
-                    "last": i == iteration_count - 1,
-                    "length": iteration_count,
-                    "revindex": iteration_count - i,
-                    "revindex0": iteration_count - i - 1,
-                },
+                "loop": loop_info,
+                "col_loop": loop_info,
             }
 
             # Re-scan this iteration's range for nested column blocks
@@ -421,15 +484,19 @@ class SheetRenderer:
             child_delta = self._process_col_blocks(nested_blocks, loop_context)
             cumulative_child_delta += child_delta
 
-            # Render expression cells in the column range
-            self._render_col_range(iter_start, iter_end + child_delta, loop_context)
+            # Store context per column for deferred rendering
+            self._store_col_context(
+                iter_start, iter_end + child_delta, loop_context
+            )
 
         # Delete the {%col endfor %} column (shifted by expansion + child changes)
         new_close_col = block.close_col + cols_added + cumulative_child_delta
         self.col_expander.remove_cols(new_close_col, new_close_col)
+        self._shift_col_context(new_close_col, -1)
 
         # Delete the {%col for %} column
         self.col_expander.remove_cols(block.open_col, block.open_col)
+        self._shift_col_context(block.open_col, -1)
 
         return cols_added + cumulative_child_delta - 2
 
@@ -461,25 +528,15 @@ class SheetRenderer:
             # Remove close column first (higher number), then open column
             adjusted_close = block.close_col + child_delta
             self.col_expander.remove_cols(adjusted_close, adjusted_close)
+            self._shift_col_context(adjusted_close, -1)
             self.col_expander.remove_cols(block.open_col, block.open_col)
+            self._shift_col_context(block.open_col, -1)
             return child_delta - 2
         else:
             # Condition is false: remove entire block
             delta = self.col_expander.remove_cols(block.open_col, block.close_col)
+            self._shift_col_context(block.open_col, delta)
             return delta
-
-    def _render_col_range(
-        self, start_col: int, end_col: int, context: dict[str, Any]
-    ) -> None:
-        """Render all template expression cells in the given column range."""
-        for col in range(start_col, end_col + 1):
-            for row in range(1, (self.ws.max_row or 1) + 1):
-                cell = self.ws.cell(row=row, column=col)
-                if not has_template_tag(cell.value):
-                    continue
-                if is_block_tag(cell.value) or is_col_block_tag(cell.value):
-                    continue
-                self._render_cell(cell, context)
 
     # --- Phase D: Render expression cells ---
 
@@ -494,7 +551,8 @@ class SheetRenderer:
                     continue
                 if is_block_tag(cell.value) or is_col_block_tag(cell.value):
                     continue
-                self._render_cell(cell, context)
+                merged = self._merge_col_context(col, context)
+                self._render_cell(cell, merged)
 
     def _render_remaining_cells(self, context: dict[str, Any]) -> None:
         """Render any remaining cells with template tags (plain rows)."""
@@ -505,7 +563,8 @@ class SheetRenderer:
                     continue
                 if is_block_tag(cell.value) or is_col_block_tag(cell.value):
                     continue
-                self._render_cell(cell, context)
+                merged = self._merge_col_context(col, context)
+                self._render_cell(cell, merged)
 
     def _render_cell(self, cell, context: dict[str, Any]) -> None:
         """Render a single cell's value."""

@@ -408,6 +408,153 @@ class TestColIfBlocks:
         assert ws.cell(row=1, column=2).value == "Also keep"
 
 
+class TestCrossLoops:
+    def test_pivot_table(self, env):
+        """Row for inside col for body — the classic pivot table pattern.
+
+        Row directives are in col A (outside the col loop) so they survive
+        col-directive removal. The cross-dimensional cell is in the col loop
+        body column (C) so it gets duplicated per quarter.
+        """
+        ws = make_ws({
+            "A1": "Metric",
+            "B1": "{%col for q in quarters %}",
+            "C1": "{{ q.name }}",
+            "C3": "{{ data[m.key][q.key] }}",
+            "D1": "{%col endfor %}",
+            "A2": "{% for m in metrics %}",
+            "A3": "{{ m.name }}",
+            "A4": "{% endfor %}",
+        })
+        context = {
+            "quarters": [
+                {"name": "Q1", "key": "q1"},
+                {"name": "Q2", "key": "q2"},
+            ],
+            "metrics": [
+                {"name": "Revenue", "key": "revenue"},
+                {"name": "Profit", "key": "profit"},
+            ],
+            "data": {
+                "revenue": {"q1": 100, "q2": 200},
+                "profit": {"q1": 10, "q2": 20},
+            },
+        }
+        SheetRenderer(ws, env).render(context)
+
+        # Col A = labels, col B = Q1, col C = Q2
+        assert ws.cell(row=1, column=1).value == "Metric"
+        assert ws.cell(row=1, column=2).value == "Q1"
+        assert ws.cell(row=1, column=3).value == "Q2"
+        assert ws.cell(row=2, column=1).value == "Revenue"
+        assert ws.cell(row=2, column=2).value == 100
+        assert ws.cell(row=2, column=3).value == 200
+        assert ws.cell(row=3, column=1).value == "Profit"
+        assert ws.cell(row=3, column=2).value == 10
+        assert ws.cell(row=3, column=3).value == 20
+
+    def test_loop_and_col_loop_accessible(self, env):
+        """Both loop (row) and col_loop variables are accessible in cross cells."""
+        ws = make_ws({
+            "A1": "Header",
+            "B1": "{%col for q in quarters %}",
+            "C1": "{{ q }}",
+            "C3": "r{{ loop.index }}-c{{ col_loop.index }}",
+            "D1": "{%col endfor %}",
+            "A2": "{% for m in metrics %}",
+            "A3": "{{ m }}",
+            "A4": "{% endfor %}",
+        })
+        context = {
+            "quarters": ["Q1", "Q2"],
+            "metrics": ["Rev", "Cost"],
+        }
+        SheetRenderer(ws, env).render(context)
+
+        # Row 1: headers
+        assert ws.cell(row=1, column=1).value == "Header"
+        assert ws.cell(row=1, column=2).value == "Q1"
+        assert ws.cell(row=1, column=3).value == "Q2"
+        # Row 2: first metric (loop.index=1, col_loop.index=1 or 2)
+        assert ws.cell(row=2, column=1).value == "Rev"
+        assert ws.cell(row=2, column=2).value == "r1-c1"
+        assert ws.cell(row=2, column=3).value == "r1-c2"
+        # Row 3: second metric (loop.index=2)
+        assert ws.cell(row=3, column=1).value == "Cost"
+        assert ws.cell(row=3, column=2).value == "r2-c1"
+        assert ws.cell(row=3, column=3).value == "r2-c2"
+
+    def test_col_for_and_row_for_independent(self, env):
+        """Col for + row for on same sheet, no cross-reference needed."""
+        ws = make_ws({
+            "A1": "Header",
+            "B1": "{%col for q in quarters %}",
+            "C1": "{{ q }}",
+            "D1": "{%col endfor %}",
+            "A2": "{% for m in metrics %}",
+            "A3": "{{ m }}",
+            "A4": "{% endfor %}",
+        })
+        context = {
+            "quarters": ["Q1", "Q2", "Q3"],
+            "metrics": ["Rev", "Cost"],
+        }
+        SheetRenderer(ws, env).render(context)
+
+        # Col-only row
+        assert ws.cell(row=1, column=1).value == "Header"
+        assert ws.cell(row=1, column=2).value == "Q1"
+        assert ws.cell(row=1, column=3).value == "Q2"
+        assert ws.cell(row=1, column=4).value == "Q3"
+        # Row-only rows
+        assert ws.cell(row=2, column=1).value == "Rev"
+        assert ws.cell(row=3, column=1).value == "Cost"
+
+    def test_empty_col_loop_with_row_loop(self, env):
+        """Empty col loop doesn't break row loop processing."""
+        ws = make_ws({
+            "A1": "Header",
+            "B1": "{%col for q in quarters %}",
+            "C1": "{{ q }}",
+            "D1": "{%col endfor %}",
+            "A2": "{% for m in metrics %}",
+            "A3": "{{ m }}",
+            "A4": "{% endfor %}",
+        })
+        context = {
+            "quarters": [],
+            "metrics": ["Rev", "Cost"],
+        }
+        SheetRenderer(ws, env).render(context)
+
+        # Col loop removed entirely, row loop still works
+        assert ws.cell(row=1, column=1).value == "Header"
+        assert ws.cell(row=2, column=1).value == "Rev"
+        assert ws.cell(row=3, column=1).value == "Cost"
+
+    def test_col_if_with_row_for(self, env):
+        """Col if alongside row for — regression test."""
+        ws = make_ws({
+            "A1": "Label",
+            "B1": "{%col if show_extra %}",
+            "C1": "Extra",
+            "D1": "{%col endif %}",
+            "A2": "{% for m in metrics %}",
+            "A3": "{{ m }}",
+            "A4": "{% endfor %}",
+        })
+        context = {
+            "show_extra": True,
+            "metrics": ["Rev", "Cost"],
+        }
+        SheetRenderer(ws, env).render(context)
+
+        assert ws.cell(row=1, column=1).value == "Label"
+        assert ws.cell(row=1, column=2).value == "Extra"
+        assert ws.cell(row=2, column=1).value == "Rev"
+        assert ws.cell(row=3, column=1).value == "Cost"
+
+
 class TestColSyntaxErrors:
     def test_mismatched_col_tags(self, env):
         ws = make_ws({

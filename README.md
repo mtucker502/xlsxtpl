@@ -9,6 +9,7 @@ Jinja2 templating for Excel `.xlsx` files. Like [docxtpl](https://github.com/ela
 - [Conditional rows](#conditional-rows)
 - [Column loops](#column-loops)
 - [Conditional columns](#conditional-columns)
+- [Cross-dimensional templates](#cross-dimensional-templates)
 - [Custom filters](#custom-filters)
 
 ## Install
@@ -164,7 +165,7 @@ tpl.save("output.xlsx")
 
 Column widths and styles are preserved on duplicated columns. Standard `loop` variables (`loop.index`, `loop.first`, etc.) are available.
 
-> **Processing order:** Column blocks (`{%col %}`) are expanded before row blocks (`{% %}`). This means column loops and conditionals cannot be nested inside row loops, and column loop body expressions cannot reference row loop variables. However, row loops *can* appear inside column-expanded regions — the row phase runs after all column expansion is complete.
+> **Processing order:** Column blocks (`{%col %}`) are expanded before row blocks (`{% %}`). Column expansion is purely structural — columns are duplicated but cell rendering is deferred. This means row loops can appear alongside column loops, and cells can reference variables from both axes (see [Cross-dimensional templates](#cross-dimensional-templates)).
 
 ## Conditional columns
 
@@ -186,6 +187,56 @@ tpl.render({"show_detail": True})
 
 # Column removed — show_detail is falsy
 tpl.render({"show_detail": False})
+```
+
+## Cross-dimensional templates
+
+Combine `{%col for %}` and `{% for %}` on the same sheet to build pivot tables and other two-dimensional layouts. Column loops expand columns structurally, then row loops expand rows — cells that reference variables from both axes are rendered with the full merged context.
+
+**In the template:**
+
+| | A | B | C | D |
+|---|---|---|---|---|
+| 1 | Metric | `{%col for q in quarters %}` | `{{ q.name }}` | `{%col endfor %}` |
+| 2 | `{% for m in metrics %}` | | | |
+| 3 | `{{ m.name }}` | | `{{ data[m.key][q.key] }}` | |
+| 4 | `{% endfor %}` | | | |
+
+Place the cross-dimensional expression (`{{ data[m.key][q.key] }}`) in a column-loop body column so it gets duplicated per column iteration. Row-loop directives go in a column outside the column loop (column A here) so they survive directive-column removal.
+
+**Render:**
+
+```python
+tpl = XlsxTemplate("template.xlsx")
+tpl.render({
+    "quarters": [
+        {"name": "Q1", "key": "q1"},
+        {"name": "Q2", "key": "q2"},
+    ],
+    "metrics": [
+        {"name": "Revenue", "key": "revenue"},
+        {"name": "Profit", "key": "profit"},
+    ],
+    "data": {
+        "revenue": {"q1": 100, "q2": 200},
+        "profit": {"q1": 10, "q2": 20},
+    },
+})
+tpl.save("output.xlsx")
+# → 2 quarter columns × 2 metric rows, with cross-referenced values.
+```
+
+### `col_loop` variable
+
+Inside a column loop, both `loop` and `col_loop` refer to the column loop metadata. In cross-dimensional cells (inside both a row loop and a column loop), `loop` refers to the **row** loop and `col_loop` refers to the **column** loop:
+
+| Variable | In col-only cell | In cross-dimensional cell |
+|---|---|---|
+| `loop` | Column loop | Row loop |
+| `col_loop` | Column loop | Column loop |
+
+```
+r{{ loop.index }}-c{{ col_loop.index }}
 ```
 
 ## Custom filters
