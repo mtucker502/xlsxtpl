@@ -11,6 +11,7 @@ Jinja2 templating for Excel `.xlsx` files. Like [docxtpl](https://github.com/ela
 - [Conditional columns](#conditional-columns)
 - [Cross-dimensional templates](#cross-dimensional-templates)
 - [Custom filters](#custom-filters)
+- [Sandbox mode](#sandbox-mode)
 
 ## Install
 
@@ -251,3 +252,27 @@ tpl.save("output.xlsx")
 ```
 
 Built-in filters: `date` (format dates), `number_format` (thousands separators).
+
+## Sandbox mode
+
+If you are rendering templates from untrusted sources, use Jinja2's `SandboxedEnvironment` to restrict access to unsafe attributes and methods. Pass it via the `jinja_env` property before calling `render()`:
+
+```python
+from jinja2.sandbox import SandboxedEnvironment
+from xlsxtpl import XlsxTemplate
+from xlsxtpl.jinja_env import create_jinja_env
+
+tpl = XlsxTemplate("template.xlsx")
+
+# Option 1: Create a sandboxed env with built-in filters preserved
+env = create_jinja_env(cls=SandboxedEnvironment)
+tpl.jinja_env = env
+
+# Option 2: Use a bare SandboxedEnvironment (no built-in filters)
+tpl.jinja_env = SandboxedEnvironment()
+
+tpl.render({"title": "Report"})
+tpl.save("output.xlsx")
+```
+
+The sandboxed environment prevents templates from accessing private attributes, calling unsafe methods, or traversing object hierarchies. A `SecurityError` is raised if a template attempts any restricted operation.

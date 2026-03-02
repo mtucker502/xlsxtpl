@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xlsxtpl"
-version = "0.1.0"
+version = "0.1.1"
 description = "Jinja2 templating for xlsx files, analogous to docxtpl for Word documents"
 requires-python = ">=3.10"
 license = "MIT"

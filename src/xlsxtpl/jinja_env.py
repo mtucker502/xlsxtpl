@@ -18,9 +18,11 @@ def _filter_number_format(value: float | int, decimals: int = 2, thousands: str 
     return formatted
 
 
-def create_jinja_env(**kwargs) -> jinja2.Environment:
+def create_jinja_env(
+    cls: type[jinja2.Environment] = jinja2.Environment, **kwargs
+) -> jinja2.Environment:
     """Create a Jinja2 Environment configured for xlsx templating."""
-    env = jinja2.Environment(
+    env = cls(
         autoescape=False,
         keep_trailing_newline=False,
         undefined=jinja2.StrictUndefined,
